@@ -66,8 +66,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);fon
 .timer-bar.warn{background:#e07b00}.timer-bar.danger{background:var(--red)}
 .header-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .user-pill{display:flex;align-items:center;gap:6px;background:var(--accent-bg);border:1px solid rgba(80,70,228,.2);border-radius:20px;padding:4px 12px;font-size:12px;font-weight:500;color:var(--accent-text)}
-.saved-flash{font-size:12px;color:var(--green);display:none;align-items:center;gap:4px}
+.saved-flash{font-size:12px;display:none;align-items:center;gap:4px}
 .saved-flash.on{display:flex}
+.saved-flash.ok{color:var(--green)}
+.saved-flash.local{color:var(--orange)}
+.saved-flash.offline{color:var(--orange)}
 .btn-finish{padding:7px 14px;font-size:13px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--green);color:#fff;border:none;border-radius:var(--rs);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;transition:background .15s}
 .btn-finish:hover{background:#236130}
 
@@ -631,7 +634,10 @@ textarea.finput{min-height:78px;resize:vertical}
     <h1>Time's up!</h1>
     <p>Your 90-minute session has ended. Your work has been automatically saved and submitted to the interviewer.</p>
     <div class="end-detail" id="timeout-detail"></div>
-    <p class="end-note">You may close this window. Good luck! 👍</p>
+    <p class="end-note" style="margin-bottom:20px">You may close this window. Good luck! 👍</p>
+    <button onclick="startNewCandidateSession()" style="padding:10px 24px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--rs);cursor:pointer">
+      <i class="ti ti-user-plus"></i> Start next candidate
+    </button>
   </div>
 </div>
 
@@ -642,7 +648,10 @@ textarea.finput{min-height:78px;resize:vertical}
     <h1>Exam submitted!</h1>
     <p>Thank you, <strong id="ty-name"></strong>! Your work has been sent to the interviewer. We'll be in touch soon.</p>
     <div class="end-detail" id="thankyou-detail"></div>
-    <p class="end-note">You may close this window. Good luck! 🎉</p>
+    <p class="end-note" style="margin-bottom:20px">You may close this window. Good luck! 🎉</p>
+    <button onclick="startNewCandidateSession()" style="padding:10px 24px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--rs);cursor:pointer">
+      <i class="ti ti-user-plus"></i> Start next candidate
+    </button>
   </div>
 </div>
 
@@ -655,6 +664,30 @@ textarea.finput{min-height:78px;resize:vertical}
     <div style="margin-top:20px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:var(--text3)">
       <div style="width:8px;height:8px;border-radius:50%;background:var(--text3);animation:blink .8s infinite"></div>
       Checking for updates…
+    </div>
+  </div>
+</div>
+
+<!-- MAINTENANCE SCREEN — shown when Supabase is unreachable -->
+<div id="maintenance-screen" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 30%,#fdf0ee 0%,var(--bg) 65%);padding:16px">
+  <div class="end-box" style="max-width:480px">
+    <div class="end-icon" style="background:#fff3e0;color:#b35a00">
+      <i class="ti ti-tools" aria-hidden="true"></i>
+    </div>
+    <h1 style="color:var(--text)">System temporarily unavailable</h1>
+    <p style="color:var(--text2)">
+      The exam system is currently offline for maintenance. Please do not attempt to start the exam right now — your work would not be saved.<br><br>
+      Please wait and try again in a few minutes. This page checks automatically.
+    </p>
+    <div style="background:var(--surface2);border-radius:var(--rs);padding:12px 16px;margin-bottom:20px;font-size:13px;color:var(--text2);text-align:left">
+      <div style="font-weight:600;margin-bottom:6px;color:var(--text)">What to do:</div>
+      <div style="margin-bottom:4px">1. Stay on this page — it will refresh automatically</div>
+      <div style="margin-bottom:4px">2. Contact the interviewer to let them know</div>
+      <div>3. Do not close this tab until the system is back</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:var(--text3)">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--orange);animation:blink .8s infinite"></div>
+      <span id="maintenance-status">Checking connection…</span>
     </div>
   </div>
 </div>
@@ -705,8 +738,108 @@ let examStartTs=null; // Unix ms stored in Supabase
 let _saveTimer=null;
 
 /* ── EXAM ACTIVE ── */
+/* ── SUPABASE HEALTH CHECK ── */
+let _supabaseOnline = true;  // assume online until proven otherwise
+let _maintenanceCheckInterval = null;
+
+async function checkSupabaseHealth(){
+  const sb = getSb();
+  if(!sb){
+    // No credentials — treat as offline
+    _supabaseOnline = false;
+    return false;
+  }
+  try{
+    const res = await sb.from('settings').select('key').limit(1).maybeSingle();
+    // If we get any response (even empty), Supabase is reachable
+    _supabaseOnline = !res.error;
+  }catch(e){
+    _supabaseOnline = false;
+  }
+  return _supabaseOnline;
+}
+
+/* ── SYNC ALL OFFLINE DATA ── */
+// Finds ALL qa_offline_ keys in localStorage and pushes them to Supabase
+async function syncAllOfflineData(){
+  const sb = getSb();
+  if(!sb) return;
+
+  const keys = Object.keys(localStorage).filter(k => k.startsWith('qa_offline_'));
+  if(!keys.length){ console.log('[QA] No offline data to sync'); return; }
+
+  console.log(`[QA] Syncing ${keys.length} offline candidate(s) to Supabase…`);
+
+  for(const key of keys){
+    try{
+      const data = JSON.parse(localStorage.getItem(key));
+      if(!data || !data.name) continue;
+
+      // Push candidate record
+      await sb.from('candidates').upsert({
+        name:       data.name,
+        status:     data.status || 'submitted',
+        bug_count:  (data.bugs||[]).length,
+        tc_count:   (data.test_cases||[]).length,
+        updated_at: data.updated_at || new Date().toISOString()
+      },{onConflict:'name'});
+
+      // Push submissions
+      await sb.from('submissions').upsert({
+        name:        data.name,
+        bugs:        data.bugs        || [],
+        test_cases:  data.test_cases  || [],
+        timer_start: data.timer_start || null,
+        updated_at:  data.updated_at  || new Date().toISOString()
+      },{onConflict:'name'});
+
+      console.log(`[QA] ✅ Synced: ${data.name}`);
+
+      // Remove from localStorage once safely synced
+      localStorage.removeItem(key);
+
+    }catch(e){
+      console.warn(`[QA] Failed to sync ${key}:`, e.message);
+    }
+  }
+  console.log('[QA] Offline sync complete.');
+}
+
+function showMaintenanceScreen(){
+  // Hide everything else
+  ['login-screen','main-app','timeout-screen','thankyou-screen','deactivated-screen']
+    .forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+  document.getElementById('maintenance-screen').style.display = 'flex';
+  _currentScreen = 'maintenance';
+
+  // Poll every 30 seconds to check if Supabase comes back
+  if(!_maintenanceCheckInterval){
+    _maintenanceCheckInterval = setInterval(async()=>{
+      const statusEl = document.getElementById('maintenance-status');
+      if(statusEl) statusEl.textContent = 'Checking connection…';
+      const online = await checkSupabaseHealth();
+      if(online){
+        clearInterval(_maintenanceCheckInterval);
+        _maintenanceCheckInterval = null;
+
+        // Sync any offline data from ALL candidates on this browser
+        if(statusEl) statusEl.textContent = 'Connection restored — syncing data…';
+        await syncAllOfflineData();
+
+        // Restore login screen
+        document.getElementById('maintenance-screen').style.display = 'none';
+        document.getElementById('login-screen').style.display       = 'flex';
+        _currentScreen = 'login';
+        applyExamActiveUI();
+      } else {
+        if(statusEl) statusEl.textContent = 'Still unavailable — retrying in 30 seconds…';
+      }
+    }, 30000);
+  }
+}
+
 let _examActive  = true;   // default: active until Supabase says otherwise
-let _currentScreen = 'login'; // 'login' | 'exam' | 'deactivated' | 'done'
+let _currentScreen = 'login'; // 'login' | 'exam' | 'deactivated' | 'maintenance' | 'done'
 
 async function fetchExamActive(){
   const sb = getSb();
@@ -790,6 +923,16 @@ async function startExam(){
 
   await fetchExamActive();
 
+  // Double-check Supabase is still reachable before starting
+  const online = await checkSupabaseHealth();
+  if(!online){
+    btn.disabled = false;
+    btn.style.background = '';
+    btn.innerHTML = '▶ Start exam &amp; begin timer';
+    showMaintenanceScreen();
+    return;
+  }
+
   if(!_examActive){
     // Restore button, show message, stay on login
     btn.disabled = false;
@@ -815,70 +958,124 @@ async function startExam(){
 }
 
 /* ── SUPABASE OPS ── */
+/* ── OFFLINE-FIRST STORAGE ── */
+function lsKey(){ return 'qa_offline_'+cName.toLowerCase().replace(/\s+/g,'_'); }
+
+function saveLocal(status){
+  try{
+    localStorage.setItem(lsKey(), JSON.stringify({
+      name:cName, bugs, test_cases:tcs,
+      timer_start:examStartTs, status:status||'in_progress',
+      updated_at:new Date().toISOString()
+    }));
+  }catch(e){}
+}
+
+function loadLocal(){
+  try{ const r=localStorage.getItem(lsKey()); return r?JSON.parse(r):null; }
+  catch(e){ return null; }
+}
+
+function flashSaved(online){
+  const f=document.getElementById('saved-flash');
+  if(!f) return;
+  f.className='saved-flash on '+(online?'ok':'local');
+  f.innerHTML=online
+    ? '<i class="ti ti-circle-check"></i> Saved'
+    : '<i class="ti ti-wifi-off"></i> Saved locally';
+  setTimeout(()=>{ f.className='saved-flash'; },2500);
+}
+
 async function registerCandidate(){
+  saveLocal('in_progress');
   try{
     const now=new Date().toISOString();
-    // upsert candidate row
     await getSb()?.from('candidates').upsert(
-      {name:cName, status:'in_progress', bug_count:0, tc_count:0, updated_at:now},
-      {onConflict:'name', ignoreDuplicates:true}
+      {name:cName,status:'in_progress',bug_count:0,tc_count:0,updated_at:now},
+      {onConflict:'name',ignoreDuplicates:true}
     );
-    // ensure submissions row exists
-    const {data:existing}=await getSb()?.from('submissions').select('name').eq('name',cName).maybeSingle();
-    if(!existing){
-      await getSb()?.from('submissions').insert({name:cName, bugs:[], test_cases:[], timer_start:examStartTs, updated_at:now});
+    const res=await getSb()?.from('submissions').select('name').eq('name',cName).maybeSingle();
+    if(!res?.data){
+      await getSb()?.from('submissions').insert({name:cName,bugs:[],test_cases:[],timer_start:examStartTs,updated_at:now});
     }
-  }catch(e){ console.warn('registerCandidate error:',e); }
+  }catch(e){ console.warn('[QA] registerCandidate offline — saved locally'); }
 }
 
 async function loadData(){
+  let loaded=false;
   try{
-    const {data:sub, error:subErr}=await getSb()?.from('submissions').select('*').eq('name',cName).maybeSingle();
-    if(!subErr && sub){
-      bugs=sub.bugs||[]; tcs=sub.test_cases||[];
-      tcN=tcs.length?Math.max(...tcs.map(t=>t.id)):0;
-      if(sub.timer_start) examStartTs=sub.timer_start;
-      renderBugs(); renderTCs();
-    }
-    // check if already submitted
-    const {data:cand, error:candErr}=await getSb()?.from('candidates').select('status').eq('name',cName).maybeSingle();
-    if(!candErr && cand && (cand.status==='submitted'||cand.status==='timeout')){
-      examDone=true;
-      document.getElementById('login-screen').style.display='none';
-      document.getElementById('main-app').style.display='none';
-      if(cand.status==='submitted'){
-        document.getElementById('ty-name').textContent=cName;
-        document.getElementById('thankyou-screen').style.display='flex';
-      } else {
-        document.getElementById('timeout-screen').style.display='flex';
+    const sb=getSb();
+    if(sb){
+      const {data:sub}=await sb.from('submissions').select('*').eq('name',cName).maybeSingle();
+      if(sub){
+        bugs=sub.bugs||[]; tcs=sub.test_cases||[];
+        tcN=tcs.length?Math.max(...tcs.map(t=>t.id)):0;
+        if(sub.timer_start) examStartTs=sub.timer_start;
+        loaded=true;
+      }
+      const {data:cand}=await sb.from('candidates').select('status').eq('name',cName).maybeSingle();
+      if(cand&&(cand.status==='submitted'||cand.status==='timeout')){
+        examDone=true;
+        document.getElementById('login-screen').style.display='none';
+        document.getElementById('main-app').style.display='none';
+        if(cand.status==='submitted'){
+          document.getElementById('ty-name').textContent=cName;
+          document.getElementById('thankyou-screen').style.display='flex';
+        } else {
+          document.getElementById('timeout-screen').style.display='flex';
+        }
+        return;
       }
     }
-  }catch(e){ console.warn('loadData error:',e); }
+  }catch(e){ console.warn('[QA] loadData offline — trying localStorage'); }
+  if(!loaded){
+    const local=loadLocal();
+    if(local){
+      bugs=local.bugs||[]; tcs=local.test_cases||[];
+      tcN=tcs.length?Math.max(...tcs.map(t=>t.id)):0;
+      if(local.timer_start) examStartTs=local.timer_start;
+    }
+  }
+  renderBugs(); renderTCs();
 }
 
 function scheduleSave(status){
   clearTimeout(_saveTimer);
+  saveLocal(status);
   _saveTimer=setTimeout(()=>doSave(status),800);
 }
 
 async function doSave(status){
+  saveLocal(status);
+  let online=false;
   try{
-    const now=new Date().toISOString();
-    await getSb()?.from('candidates').upsert(
-      {name:cName, status:status||'in_progress', bug_count:bugs.length, tc_count:tcs.length, updated_at:now},
-      {onConflict:'name'}
-    );
-    await getSb()?.from('submissions').upsert(
-      {name:cName, bugs, test_cases:tcs, timer_start:examStartTs, updated_at:now},
-      {onConflict:'name'}
-    );
-    const f=document.getElementById('saved-flash');
-    if(f){f.classList.add('on');setTimeout(()=>f.classList.remove('on'),2000);}
-  }catch(e){ console.warn('Save failed:',e.message||e); }
+    const sb=getSb();
+    if(sb){
+      const now=new Date().toISOString();
+      await sb.from('candidates').upsert(
+        {name:cName,status:status||'in_progress',bug_count:bugs.length,tc_count:tcs.length,updated_at:now},
+        {onConflict:'name'}
+      );
+      await sb.from('submissions').upsert(
+        {name:cName,bugs,test_cases:tcs,timer_start:examStartTs,updated_at:now},
+        {onConflict:'name'}
+      );
+      online=true;
+    }
+  }catch(e){ console.warn('[QA] Supabase save failed — data safe in localStorage'); }
+  flashSaved(online);
 }
 
 function save(status){scheduleSave(status);}
 async function forceSave(status){await doSave(status);}
+
+function downloadBackup(){
+  const data={name:cName,bugs,test_cases:tcs,elapsed:elapsedLabel(),submitted_at:new Date().toISOString(),status:'submitted'};
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+  a.download='QA_Exam_'+cName.replace(/\s+/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+}
 
 /* ── TIMER ── */
 function startTimer(){
@@ -912,7 +1109,9 @@ function elapsedLabel(){const u=EXAM_DURATION-secondsLeft;return String(Math.flo
 
 async function timeUp(){
   if(examDone)return; examDone=true; _currentScreen='done'; clearInterval(timerInterval);
-  await forceSave('timeout');
+  saveLocal('timeout'); // always save locally first
+  const saved = await trySaveToSupabase('timeout');
+  if(!saved) downloadBackup(); // auto-download if Supabase failed
   document.getElementById('main-app').style.display='none';
   document.getElementById('timeout-screen').style.display='flex';
   document.getElementById('timeout-detail').innerHTML=buildDetail(bugs.length,tcs.length,elapsedLabel());
@@ -932,11 +1131,33 @@ function hideSubmitModal(){document.getElementById('submit-modal').classList.rem
 async function confirmSubmit(){
   if(examDone)return; examDone=true; _currentScreen='done'; clearInterval(timerInterval);
   hideSubmitModal();
-  await forceSave('submitted');
+  saveLocal('submitted'); // always save locally first
+  const saved = await trySaveToSupabase('submitted');
+  if(!saved) downloadBackup(); // auto-download if Supabase failed
   document.getElementById('main-app').style.display='none';
   document.getElementById('ty-name').textContent=cName;
   document.getElementById('thankyou-detail').innerHTML=buildDetail(bugs.length,tcs.length,elapsedLabel());
   document.getElementById('thankyou-screen').style.display='flex';
+}
+
+// Tries to save to Supabase — returns true if successful, false if offline
+async function trySaveToSupabase(status){
+  try{
+    const sb=getSb(); if(!sb) return false;
+    const now=new Date().toISOString();
+    await sb.from('candidates').upsert(
+      {name:cName,status,bug_count:bugs.length,tc_count:tcs.length,updated_at:now},
+      {onConflict:'name'}
+    );
+    await sb.from('submissions').upsert(
+      {name:cName,bugs,test_cases:tcs,timer_start:examStartTs,updated_at:now},
+      {onConflict:'name'}
+    );
+    return true;
+  }catch(e){
+    console.warn('[QA] Supabase save failed — backup file downloaded instead');
+    return false;
+  }
 }
 
 /* ── TABS ── */
@@ -1221,10 +1442,87 @@ function renderTCs(){
     </div>`).join('');
 }
 
-/* ── INIT ── */
+/* ── NEW CANDIDATE SESSION ── */
+function startNewCandidateSession(){
+  // Reset all exam state
+  cName          = '';
+  cart           = [];
+  bugs           = [];
+  tcs            = [];
+  bugSev         = null;
+  bugPri         = null;
+  tcPri          = null;
+  editingBugId   = null;
+  editingTCId    = null;
+  tcN            = 0;
+  activeFilters  = {sale:false, instock:false};
+  couponApplied  = false;
+  couponDiscount = 0;
+  examDone       = false;
+  secondsLeft    = EXAM_DURATION;
+  examStartTs    = null;
+  _currentScreen = 'login';
+  _examActive    = true;
+
+  // Stop any running timer
+  if(timerInterval){ clearInterval(timerInterval); timerInterval=null; }
+  if(_maintenanceCheckInterval){ clearInterval(_maintenanceCheckInterval); _maintenanceCheckInterval=null; }
+  if(_saveTimer){ clearTimeout(_saveTimer); _saveTimer=null; }
+
+  // Reset UI — hide all end screens, show login
+  ['timeout-screen','thankyou-screen','deactivated-screen','maintenance-screen','main-app']
+    .forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+
+  // Reset login form
+  const nameInput = document.getElementById('login-name');
+  if(nameInput){ nameInput.value=''; nameInput.classList.remove('err'); }
+  const errEl = document.getElementById('login-inline-error');
+  if(errEl) errEl.textContent='';
+  const btn = document.getElementById('login-btn');
+  if(btn){
+    btn.disabled=false;
+    btn.style.background='';
+    btn.style.cursor='';
+    btn.style.opacity='';
+    btn.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start exam &amp; begin timer';
+  }
+
+  // Reset timer display
+  const timerEl = document.getElementById('timer-display');
+  if(timerEl){ timerEl.textContent='90:00'; timerEl.className='timer-display'; }
+  const barEl = document.getElementById('timer-bar');
+  if(barEl){ barEl.style.width='100%'; barEl.className='timer-bar'; }
+
+  // Reset bug/TC lists
+  renderBugs(); renderTCs();
+
+  // Reset cart
+  updateCartUI();
+
+  // Show login screen and re-check Supabase health
+  document.getElementById('login-screen').style.display='flex';
+
+  // Re-run health check to apply correct state
+  checkExamActiveLoop();
+}
+
+
 (async()=>{
-  await checkExamActiveLoop(); // runs fetchExamActive + shows disabled state if needed
-  setInterval(checkExamActiveLoop, 5000);
+  // Step 1: check if Supabase is reachable at all
+  const online = await checkSupabaseHealth();
+  if(!online){
+    showMaintenanceScreen();
+    return;
+  }
+
+  // Step 2: Supabase is up — sync any offline data from previous sessions on this browser
+  await syncAllOfflineData();
+
+  // Step 3: check exam active state
+  await checkExamActiveLoop();
+
+  // Step 4: poll every 5 seconds
+  setInterval(async()=>{ await checkExamActiveLoop(); }, 5000);
 })();
 </script>
 </body>

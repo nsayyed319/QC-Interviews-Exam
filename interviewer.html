@@ -299,6 +299,10 @@ tr:hover td{background:var(--surface2)}
     <div class="live-pill"><div class="dot"></div> Live</div>
     <button class="hbtn" onclick="refresh()"><i class="ti ti-refresh"></i> <span class="btn-label">Refresh</span></button>
     <button class="hbtn hbtn-green" onclick="exportExcel()"><i class="ti ti-file-spreadsheet"></i> <span class="btn-label">Export</span></button>
+    <label class="hbtn" style="cursor:pointer" title="Import offline backup JSON">
+      <i class="ti ti-file-import"></i> <span class="btn-label">Import JSON</span>
+      <input type="file" accept=".json" style="display:none" onchange="importOfflineJSON(event)">
+    </label>
   </div>
 </header>
 
@@ -344,7 +348,7 @@ tr:hover td{background:var(--surface2)}
    The password is stored as a SHA-256 hash — it
    cannot be read from the source code.
 
-   
+   Default password: interviewer2024
 
    To change it:
    1. Go to: https://emn178.github.io/online-tools/sha256.html
@@ -927,6 +931,54 @@ function renderDashboard(){
 }
 
 /* ── EXCEL EXPORT ── */
+/* ── IMPORT OFFLINE JSON ── */
+async function importOfflineJSON(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!data.name){ alert('Invalid file — missing candidate name.'); return; }
+
+    const sb = getSb();
+    if(!sb){ alert('Supabase not connected — cannot import.'); return; }
+
+    const now = new Date().toISOString();
+
+    // Push candidate
+    await sb.from('candidates').upsert({
+      name:      data.name,
+      status:    data.status || 'submitted',
+      bug_count: (data.bugs||[]).length,
+      tc_count:  (data.test_cases||[]).length,
+      updated_at: now
+    },{onConflict:'name'});
+
+    // Push submissions
+    await sb.from('submissions').upsert({
+      name:       data.name,
+      bugs:       data.bugs       || [],
+      test_cases: data.test_cases || [],
+      timer_start:data.timer_start|| null,
+      updated_at: now
+    },{onConflict:'name'});
+
+    // Refresh panel
+    await loadAll();
+    renderSidebar();
+    alert(`✅ "${data.name}" imported successfully!\n\nBugs: ${(data.bugs||[]).length}\nTest cases: ${(data.test_cases||[]).length}`);
+
+    // Auto-select the imported candidate
+    await selectCandidate(data.name);
+
+  }catch(e){
+    alert('Import failed: ' + e.message);
+    console.error('[QA] Import error:', e);
+  }
+  // Reset file input so same file can be re-imported
+  event.target.value = '';
+}
+
 function exportExcel(){
   const real=registry.filter(c=>!dummies[c.name]);
   if(!real.length){alert('No real candidates to export. (Dummy entries are excluded.)');return;}

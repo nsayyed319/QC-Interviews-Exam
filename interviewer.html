@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
 <style>
 :root{
   --bg:#f0eff9;--surface:#fff;--surface2:#e9e7f7;
@@ -256,6 +257,31 @@ tr:hover td{background:var(--surface2)}
 .pw-error{font-size:13px;color:var(--red);margin-top:8px;min-height:18px;font-weight:500}
 .pw-note{font-size:12px;color:var(--text3);margin-top:14px}
 @media(max-width:480px){.pw-box{padding:28px 18px}}
+/* ── EDGE RECOVERY VIEW ── */
+#recovery-view{display:none;padding:24px 26px;overflow-y:auto}
+.rec-upload-box{border:2px dashed var(--border2);border-radius:var(--r);padding:36px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface);margin-bottom:20px}
+.rec-upload-box:hover{border-color:var(--accent);background:var(--accent-bg)}
+.rec-upload-box i{font-size:36px;color:var(--text3);margin-bottom:10px;display:block}
+.rec-upload-box h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.rec-upload-box p{font-size:13px;color:var(--text2)}
+.rec-status{background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:12px 16px;font-size:13px;margin-bottom:16px;display:none}
+.rec-status.ok{background:var(--green-bg);border-color:var(--green);color:var(--green)}
+.rec-status.err{background:var(--red-bg);border-color:var(--red);color:var(--red)}
+.rec-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;overflow:hidden}
+.rec-group-header{padding:12px 16px;background:var(--surface2);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border)}
+.rec-row{display:grid;grid-template-columns:180px 1fr 120px;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px;align-items:center}
+.rec-row:last-child{border-bottom:none}
+.rec-row:hover{background:var(--surface2)}
+.rec-field{font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);word-break:break-all}
+.rec-value{font-size:13px;color:var(--text);word-break:break-word}
+.rec-date{font-size:11px;color:var(--text3)}
+.rec-table-header{display:grid;grid-template-columns:180px 1fr 120px;gap:10px;padding:8px 16px;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;background:var(--surface2);border-bottom:1px solid var(--border)}
+.rec-assign-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-top:16px}
+.rec-assign-box h3{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:7px}
+.rec-inp{width:100%;padding:9px 12px;font-size:14px;font-family:'DM Sans',sans-serif;border:1.5px solid var(--border2);border-radius:var(--rs);outline:none;margin-bottom:10px}
+.rec-inp:focus{border-color:var(--accent)}
+.rec-save-btn{padding:10px 20px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--rs);cursor:pointer}
+.rec-save-btn:hover{background:#3d34c8}
 </style>
 <body>
 
@@ -290,6 +316,7 @@ tr:hover td{background:var(--surface2)}
     <div class="view-toggle">
       <button class="vtab active" id="vtab-candidates" onclick="switchView('candidates')"><i class="ti ti-users"></i> <span>Candidates</span></button>
       <button class="vtab" id="vtab-dashboard" onclick="switchView('dashboard')"><i class="ti ti-chart-bar"></i> <span>Dashboard</span></button>
+      <button class="vtab" id="vtab-recovery" onclick="switchView('recovery')"><i class="ti ti-database-import"></i> <span>Recovery</span></button>
     </div>
     <div class="exam-toggle-wrap">
       <span class="exam-toggle-label">Exam</span>
@@ -571,8 +598,10 @@ async function syncToggleUI(){
 function switchView(v){
   document.getElementById('candidates-view').style.display = v==='candidates'?'grid':'none';
   document.getElementById('dashboard-view').style.display  = v==='dashboard' ?'block':'none';
+  document.getElementById('recovery-view').style.display   = v==='recovery'  ?'block':'none';
   document.getElementById('vtab-candidates').classList.toggle('active',v==='candidates');
   document.getElementById('vtab-dashboard').classList.toggle('active',v==='dashboard');
+  document.getElementById('vtab-recovery').classList.toggle('active',v==='recovery');
   if(v==='dashboard') renderDashboard();
 }
 
@@ -1040,6 +1069,228 @@ function subscribeRealtime(){
 }
 
 /* ── INIT ── */
+/* ══════════════════════════════════════
+   EDGE AUTOFILL RECOVERY
+   ══════════════════════════════════════ */
+let _recAllRows = [];
+
+// Exam-related field names from our candidate.html
+const EXAM_FIELDS = [
+  'bug-title','bug-steps','bug-expected','bug-actual',
+  'tc-title','tc-pre','tc-steps','tc-expected',
+  'login-name','site-desc','co-fname','co-lname',
+  'co-email','co-phone','co-street','co-city','co-zip',
+  'co-coupon','search-input'
+];
+
+async function loadWebDataFile(event){
+  const file = event.target.files[0];
+  if(!file) return;
+
+  const statusEl = document.getElementById('rec-status');
+  statusEl.className = 'rec-status';
+  statusEl.style.display = 'block';
+  statusEl.textContent = '⏳ Loading database…';
+
+  try{
+    // Load sql.js
+    const SQL = await initSqlJs({
+      locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${file}`
+    });
+
+    // Read file as ArrayBuffer
+    const buffer = await file.arrayBuffer();
+    const db = new SQL.Database(new Uint8Array(buffer));
+
+    // Query autofill table
+    let rows = [];
+    try{
+      const result = db.exec(`
+        SELECT name, value, date_last_used, count
+        FROM autofill
+        WHERE value != ''
+        ORDER BY date_last_used DESC
+      `);
+      if(result.length > 0){
+        rows = result[0].values.map(r => ({
+          field: r[0] || '',
+          value: r[1] || '',
+          date:  r[2] ? new Date(r[2] * 1000).toLocaleString() : '—',
+          count: r[3] || 1
+        }));
+      }
+    }catch(e){
+      console.warn('[QA Recovery] autofill table error:', e.message);
+    }
+
+    // Also try autofill_profile_names, email for name recovery
+    let profileRows = [];
+    try{
+      const res2 = db.exec(`SELECT first_name, middle_name, last_name, email FROM autofill_profiles
+                            LEFT JOIN autofill_profile_names USING(guid)
+                            LEFT JOIN autofill_profile_emails USING(guid) LIMIT 20`);
+      if(res2.length > 0){
+        res2[0].values.forEach(r => {
+          const fullName = [r[0],r[1],r[2]].filter(Boolean).join(' ');
+          if(fullName) profileRows.push({field:'[Profile] Full Name', value:fullName, date:'—', count:1});
+          if(r[3])     profileRows.push({field:'[Profile] Email',     value:r[3],    date:'—', count:1});
+        });
+      }
+    }catch(e){ /* table may not exist */ }
+
+    _recAllRows = [...profileRows, ...rows];
+    db.close();
+
+    if(_recAllRows.length === 0){
+      statusEl.className = 'rec-status err';
+      statusEl.textContent = '⚠ No autofill data found in this file. The candidate may not have typed enough for Edge to save, or this is not the correct Web Data file.';
+      return;
+    }
+
+    statusEl.className = 'rec-status ok';
+    statusEl.textContent = `✅ Found ${_recAllRows.length} saved values. Review below.`;
+
+    renderRecoveryData(_recAllRows);
+    document.getElementById('rec-results').style.display = 'block';
+
+    // Update upload label
+    document.getElementById('rec-upload-label').style.borderColor = 'var(--green)';
+    document.getElementById('rec-upload-label').style.background  = 'var(--green-bg)';
+
+  }catch(e){
+    statusEl.className = 'rec-status err';
+    statusEl.textContent = '❌ Failed to read file: ' + e.message + '. Make sure Edge is fully closed before copying the Web Data file.';
+    console.error('[QA Recovery]', e);
+  }
+
+  event.target.value = '';
+}
+
+function renderRecoveryData(rows){
+  // Summary cards
+  const examRows  = rows.filter(r => EXAM_FIELDS.includes(r.field));
+  const nameRows  = rows.filter(r => r.field.toLowerCase().includes('name') || r.field === 'login-name');
+  const bugRows   = rows.filter(r => r.field === 'bug-title');
+  const tcRows    = rows.filter(r => r.field === 'tc-title');
+
+  document.getElementById('rec-summary').innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:24px;font-weight:600;color:var(--accent)">${rows.length}</div>
+      <div style="font-size:12px;color:var(--text2)">Total values found</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:24px;font-weight:600;color:var(--green)">${examRows.length}</div>
+      <div style="font-size:12px;color:var(--text2)">Exam-related values</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:24px;font-weight:600;color:var(--red)">${bugRows.length}</div>
+      <div style="font-size:12px;color:var(--text2)">Bug titles found</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:24px;font-weight:600;color:var(--blue)">${tcRows.length}</div>
+      <div style="font-size:12px;color:var(--text2)">Test case titles found</div>
+    </div>`;
+
+  filterRecoveryData();
+
+  // Auto-fill name if found
+  const nameRow = nameRows[0] || rows.find(r=>r.field==='login-name');
+  if(nameRow) document.getElementById('rec-cand-name').value = nameRow.value;
+
+  // Auto-fill bugs
+  if(bugRows.length){
+    document.getElementById('rec-cand-bugs').value = bugRows.map(r=>r.value).join('\n');
+  }
+
+  // Auto-fill test cases
+  if(tcRows.length){
+    document.getElementById('rec-cand-tcs').value = tcRows.map(r=>r.value).join('\n');
+  }
+}
+
+function filterRecoveryData(){
+  const search  = (document.getElementById('rec-search')?.value||'').toLowerCase();
+  const filter  = document.getElementById('rec-filter')?.value||'all';
+
+  let rows = _recAllRows;
+  if(filter === 'exam') rows = rows.filter(r => EXAM_FIELDS.includes(r.field));
+  if(filter === 'name') rows = rows.filter(r => r.field.toLowerCase().includes('name'));
+  if(search) rows = rows.filter(r => r.value.toLowerCase().includes(search) || r.field.toLowerCase().includes(search));
+
+  const body = document.getElementById('rec-table-body');
+  if(!rows.length){
+    body.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">No values match your filter.</div>';
+    return;
+  }
+
+  // Highlight exam fields
+  body.innerHTML = rows.map(r => {
+    const isExam = EXAM_FIELDS.includes(r.field);
+    const fieldLabel = isExam
+      ? `<span style="background:var(--accent-bg);color:var(--accent-text);padding:1px 6px;border-radius:4px;font-size:11px;font-family:'DM Mono',monospace">${r.field}</span>`
+      : `<span class="rec-field">${r.field}</span>`;
+    return `<div class="rec-row" style="${isExam?'background:#f9f8ff':''}">
+      <div>${fieldLabel}</div>
+      <div class="rec-value">${r.value}</div>
+      <div class="rec-date">${r.date}</div>
+    </div>`;
+  }).join('');
+}
+
+function exportRecoveryCSV(){
+  if(!_recAllRows.length){ alert('No data loaded yet.'); return; }
+  const ws = XLSX.utils.json_to_sheet(_recAllRows.map(r=>({
+    'Field': r.field,
+    'Value': r.value,
+    'Last Used': r.date,
+    'Count': r.count
+  })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Autofill Data');
+  XLSX.writeFile(wb, `Edge_Recovery_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function saveRecoveredCandidate(){
+  const name   = document.getElementById('rec-cand-name').value.trim();
+  const bugsRaw= document.getElementById('rec-cand-bugs').value.trim();
+  const tcsRaw = document.getElementById('rec-cand-tcs').value.trim();
+  const msgEl  = document.getElementById('rec-save-msg');
+
+  if(!name){ msgEl.style.color='var(--red)'; msgEl.textContent='Please enter the candidate name.'; return; }
+
+  const sb = getSb();
+  if(!sb){ msgEl.style.color='var(--red)'; msgEl.textContent='Supabase not connected.'; return; }
+
+  // Build bugs array from text
+  const bugs = bugsRaw ? bugsRaw.split('\n').filter(l=>l.trim()).map((title,i)=>({
+    id:i+1, title:title.trim(), sev:'medium', pri:2,
+    steps:'Recovered from Edge autofill', expected:'', actual:''
+  })) : [];
+
+  // Build test cases array
+  const tcs = tcsRaw ? tcsRaw.split('\n').filter(l=>l.trim()).map((title,i)=>({
+    id:i+1, title:title.trim(), pre:'', steps:'', expected:'', priority:'P2', result:null
+  })) : [];
+
+  try{
+    msgEl.style.color='var(--text2)'; msgEl.textContent='Saving…';
+    const now = new Date().toISOString();
+    await sb.from('candidates').upsert({
+      name, status:'submitted', bug_count:bugs.length, tc_count:tcs.length, updated_at:now
+    },{onConflict:'name'});
+    await sb.from('submissions').upsert({
+      name, bugs, test_cases:tcs, updated_at:now
+    },{onConflict:'name'});
+    msgEl.style.color='var(--green)';
+    msgEl.textContent=`✅ ${name} saved with ${bugs.length} bug(s) and ${tcs.length} test case(s).`;
+    await loadAll();
+    renderSidebar();
+  }catch(e){
+    msgEl.style.color='var(--red)';
+    msgEl.textContent='Save failed: '+e.message;
+  }
+}
+
 let _appInited = false;
 async function initApp(){
   if(_appInited) return;
@@ -1050,6 +1301,86 @@ async function initApp(){
   subscribeRealtime();
 }
 </script>
+<!-- ══ RECOVERY VIEW ══ -->
+<div id="recovery-view">
+  <div style="max-width:860px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+      <div>
+        <h2 style="font-size:20px;font-weight:600;display:flex;align-items:center;gap:8px"><i class="ti ti-database-import" style="color:var(--accent)"></i> Edge Autofill Recovery</h2>
+        <p style="font-size:13px;color:var(--text2);margin-top:4px">Upload the candidate's Edge <code style="background:var(--surface2);padding:1px 6px;border-radius:4px">Web Data</code> file to extract everything they typed in the exam.</p>
+      </div>
+    </div>
+
+    <!-- How to get the file -->
+    <div style="background:var(--accent-bg);border:1px solid rgba(80,70,228,.2);border-radius:var(--r);padding:14px 18px;margin-bottom:20px;font-size:13px;color:var(--accent-text)">
+      <strong>How to get the Web Data file from the candidate's computer:</strong>
+      <ol style="margin-top:8px;padding-left:18px;line-height:2">
+        <li>Close Edge completely on their computer</li>
+        <li>Press <strong>Windows + R</strong> → paste: <code style="background:#fff;padding:1px 6px;border-radius:4px">%LOCALAPPDATA%\Microsoft\Edge\User Data\Default</code> → press Enter</li>
+        <li>Find the file named <strong>Web Data</strong> (no extension) → copy it to Desktop</li>
+        <li>Send that file to you (email, WhatsApp, USB)</li>
+        <li>Upload it below</li>
+      </ol>
+    </div>
+
+    <!-- Upload box -->
+    <label class="rec-upload-box" id="rec-upload-label">
+      <input type="file" id="rec-file-input" style="display:none" onchange="loadWebDataFile(event)">
+      <i class="ti ti-file-database"></i>
+      <h3>Click to upload Edge Web Data file</h3>
+      <p>Select the <strong>Web Data</strong> file from the candidate's Edge profile</p>
+    </label>
+
+    <!-- Status -->
+    <div class="rec-status" id="rec-status"></div>
+
+    <!-- Results -->
+    <div id="rec-results" style="display:none">
+
+      <!-- Summary -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px" id="rec-summary"></div>
+
+      <!-- Search -->
+      <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="rec-search" placeholder="Search values…" oninput="filterRecoveryData()"
+          style="flex:1;min-width:200px;padding:9px 12px;font-size:14px;font-family:'DM Sans',sans-serif;border:1.5px solid var(--border2);border-radius:var(--rs);outline:none">
+        <select id="rec-filter" onchange="filterRecoveryData()"
+          style="padding:9px 12px;font-size:13px;font-family:'DM Sans',sans-serif;border:1.5px solid var(--border2);border-radius:var(--rs);outline:none;background:var(--surface)">
+          <option value="all">All fields</option>
+          <option value="exam">Exam fields only</option>
+          <option value="name">Name fields</option>
+        </select>
+        <button onclick="exportRecoveryCSV()" style="padding:9px 16px;font-size:13px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--green);color:#fff;border:none;border-radius:var(--rs);cursor:pointer">
+          <i class="ti ti-download"></i> Export CSV
+        </button>
+      </div>
+
+      <!-- Data table -->
+      <div class="rec-group">
+        <div class="rec-table-header">
+          <div>Field name</div>
+          <div>Value typed</div>
+          <div>Last used</div>
+        </div>
+        <div id="rec-table-body"></div>
+      </div>
+
+      <!-- Assign to candidate -->
+      <div class="rec-assign-box">
+        <h3><i class="ti ti-user-plus"></i> Save recovered data as a candidate submission</h3>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:14px">After reviewing the data above, fill in the candidate's name and paste the relevant bugs/test cases to save them to the database.</p>
+        <input class="rec-inp" id="rec-cand-name" type="text" placeholder="Candidate full name">
+        <textarea class="rec-inp" id="rec-cand-bugs" style="min-height:100px" placeholder="Paste bug titles from above (one per line)&#10;e.g: Smart Watch shows negative price&#10;Out of stock item can be added to cart"></textarea>
+        <textarea class="rec-inp" id="rec-cand-tcs" style="min-height:80px" placeholder="Paste test case titles from above (one per line)"></textarea>
+        <button class="rec-save-btn" onclick="saveRecoveredCandidate()">
+          <i class="ti ti-device-floppy"></i> Save to database
+        </button>
+        <p id="rec-save-msg" style="font-size:13px;margin-top:10px;min-height:18px"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
 </div><!-- end main-app-wrap -->
 </body>
 </html>

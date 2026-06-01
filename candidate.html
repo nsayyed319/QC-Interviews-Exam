@@ -744,14 +744,9 @@ let _maintenanceCheckInterval = null;
 
 async function checkSupabaseHealth(){
   const sb = getSb();
-  if(!sb){
-    // No credentials — treat as offline
-    _supabaseOnline = false;
-    return false;
-  }
+  if(!sb){ _supabaseOnline=false; return false; }
   try{
-    const res = await sb.from('settings').select('key').limit(1).maybeSingle();
-    // If we get any response (even empty), Supabase is reachable
+    const res = await sb.from('settings').select('key').limit(1);
     _supabaseOnline = !res.error;
   }catch(e){
     _supabaseOnline = false;

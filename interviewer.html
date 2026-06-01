@@ -1070,6 +1070,92 @@ function subscribeRealtime(){
 
 /* ── INIT ── */
 /* ══════════════════════════════════════
+   DOWNLOAD RECOVERY TOOL
+   ══════════════════════════════════════ */
+function downloadRecoveryTool(){
+  const scriptOpen  = '<scr' + 'ipt>';
+  const scriptClose = '</' + 'script>';
+  const html = [
+    '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+    '<title>QA Exam Recovery Tool</title>',
+    '<style>',
+    '*{box-sizing:border-box;margin:0;padding:0}',
+    'body{font-family:system-ui,sans-serif;background:#f5f5f5;padding:20px;color:#1a1a18}',
+    '.box{background:#fff;border:1px solid #ddd;border-radius:10px;padding:20px;max-width:680px;margin:0 auto 16px}',
+    'h1{font-size:20px;margin-bottom:6px}h2{font-size:15px;margin-bottom:10px;color:#444}',
+    'p{font-size:14px;color:#666;margin-bottom:10px;line-height:1.6}',
+    '.step{background:#f0f0f0;border-radius:8px;padding:12px 14px;margin-bottom:8px;font-size:14px}',
+    '.step strong{display:block;margin-bottom:3px}',
+    'code{background:#e0e0e0;padding:2px 7px;border-radius:4px;font-family:monospace;font-size:12px;word-break:break-all}',
+    '.code-block{background:#1e1e1e;color:#d4d4d4;padding:14px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;margin:8px 0;line-height:1.6}',
+    '.btn{display:inline-block;padding:10px 20px;background:#5046e4;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-family:system-ui;font-weight:600;margin-top:8px}',
+    '.btn-green{background:#2d7a3a}',
+    '.warn{background:#fdf0ee;border:1px solid #c0392b;border-radius:8px;padding:10px 14px;font-size:13px;color:#c0392b;margin-bottom:12px}',
+    '.ok{background:#eaf4ec;border:1px solid #2d7a3a;border-radius:8px;padding:10px 14px;font-size:13px;color:#2d7a3a;margin-top:10px;display:none}',
+    'textarea{width:100%;min-height:120px;padding:10px;font-size:13px;border:1px solid #ddd;border-radius:6px;resize:vertical;margin-top:6px;font-family:system-ui}',
+    'input[type=text]{width:100%;padding:9px 12px;font-size:14px;border:1px solid #ddd;border-radius:6px;margin-bottom:8px;font-family:system-ui}',
+    '</style></head><body>',
+
+    '<div class="box">',
+    '<h1>QA Exam Recovery Tool</h1>',
+    '<p>This tool recovers your exam data. Follow whichever method works.</p>',
+    '<div class="warn">Do NOT close Edge or clear browser data before completing this.</div>',
+    '</div>',
+
+    '<div class="box">',
+    '<h2>Method 1 — Exam tab still open (best chance)</h2>',
+    '<div class="step"><strong>Step 1</strong> Press Ctrl+Shift+T to restore closed tabs. Find the exam tab.</div>',
+    '<div class="step"><strong>Step 2</strong> Press F12 → Console → paste this script → press Enter:<br>',
+    '<div class="code-block">try{const d={name:typeof cName!="undefined"?cName:"unknown",bugs:typeof bugs!="undefined"?bugs:[],testCases:typeof tcs!="undefined"?tcs:[],recovered:new Date().toISOString()};const b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="RECOVERED_"+(d.name||"exam")+".json";a.click();console.log("Done! Bugs:",d.bugs.length,"TCs:",d.testCases.length);}catch(e){console.log("Error:",e.message);}</div>',
+    '</div>',
+    '<div class="step"><strong>Step 3</strong> A JSON file downloads automatically. Send it to the interviewer.</div>',
+    '</div>',
+
+    '<div class="box">',
+    '<h2>Method 2 — Write from memory</h2>',
+    '<p>Fill in what you remember. The interviewer will use this to rebuild your results.</p>',
+    '<input type="text" id="r-name" placeholder="Your full name">',
+    '<p><strong>Bugs you found</strong> (one per line):</p>',
+    '<textarea id="r-bugs" placeholder="Smart Watch shows negative price\nOut of stock item can be added to cart\nSearch is case sensitive"></textarea>',
+    '<p style="margin-top:10px"><strong>Test cases you wrote</strong> (one per line):</p>',
+    '<textarea id="r-tcs" placeholder="Verify product prices are positive\nVerify out of stock items cannot be added"></textarea>',
+    '<p style="margin-top:10px"><strong>Site description:</strong></p>',
+    '<textarea id="r-desc" style="min-height:70px" placeholder="Describe what the website does..."></textarea>',
+    '<button class="btn btn-green" onclick="dl()">Download my answers</button>',
+    '<div class="ok" id="ok">File downloaded! Send it to the interviewer.</div>',
+    '</div>',
+
+    scriptOpen,
+    'function dl(){',
+    '  const name=document.getElementById("r-name").value.trim();',
+    '  const bugs=document.getElementById("r-bugs").value.trim();',
+    '  const tcs=document.getElementById("r-tcs").value.trim();',
+    '  const desc=document.getElementById("r-desc").value.trim();',
+    '  if(!name){alert("Please enter your name.");return;}',
+    '  if(!bugs&&!tcs){alert("Please fill in bugs or test cases.");return;}',
+    '  const bArr=bugs?bugs.split("\\n").filter(l=>l.trim()).map((t,i)=>({id:i+1,title:t.trim(),sev:"medium",pri:2,steps:"Reconstructed from memory",expected:"",actual:""})):[];',
+    '  const tArr=tcs?tcs.split("\\n").filter(l=>l.trim()).map((t,i)=>({id:i+1,title:t.trim(),pre:"",steps:"",expected:"",priority:"P2",result:null})):[];',
+    '  const data={name,description:desc,bugs:bArr,test_cases:tArr,status:"submitted",type:"manual_reconstruction",recovered_at:new Date().toISOString()};',
+    '  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});',
+    '  const a=document.createElement("a");a.href=URL.createObjectURL(blob);',
+    '  a.download="RECOVERY_"+name.replace(/\\s+/g,"_")+".json";a.click();',
+    '  document.getElementById("ok").style.display="block";',
+    '}',
+    scriptClose,
+    '</body></html>'
+  ].join('\n');
+
+  const blob = new Blob([html], {type:'text/html'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'recovery-tool.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+
+/* ══════════════════════════════════════
    EDGE AUTOFILL RECOVERY
    ══════════════════════════════════════ */
 let _recAllRows = [];
@@ -1306,30 +1392,57 @@ async function initApp(){
   <div style="max-width:860px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div>
-        <h2 style="font-size:20px;font-weight:600;display:flex;align-items:center;gap:8px"><i class="ti ti-database-import" style="color:var(--accent)"></i> Edge Autofill Recovery</h2>
-        <p style="font-size:13px;color:var(--text2);margin-top:4px">Upload the candidate's Edge <code style="background:var(--surface2);padding:1px 6px;border-radius:4px">Web Data</code> file to extract everything they typed in the exam.</p>
+        <h2 style="font-size:20px;font-weight:600;display:flex;align-items:center;gap:8px"><i class="ti ti-database-import" style="color:var(--accent)"></i> Data Recovery</h2>
+        <p style="font-size:13px;color:var(--text2);margin-top:4px">Recover exam data from candidates whose results were not saved to Supabase.</p>
       </div>
     </div>
 
-    <!-- How to get the file -->
-    <div style="background:var(--accent-bg);border:1px solid rgba(80,70,228,.2);border-radius:var(--r);padding:14px 18px;margin-bottom:20px;font-size:13px;color:var(--accent-text)">
-      <strong>How to get the Web Data file from the candidate's computer:</strong>
-      <ol style="margin-top:8px;padding-left:18px;line-height:2">
-        <li>Close Edge completely on their computer</li>
-        <li>Press <strong>Windows + R</strong> → paste: <code style="background:#fff;padding:1px 6px;border-radius:4px">%LOCALAPPDATA%\Microsoft\Edge\User Data\Default</code> → press Enter</li>
-        <li>Find the file named <strong>Web Data</strong> (no extension) → copy it to Desktop</li>
-        <li>Send that file to you (email, WhatsApp, USB)</li>
-        <li>Upload it below</li>
-      </ol>
+    <!-- STEP 1: Download and send recovery tool -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="width:28px;height:28px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">1</div>
+        <h3 style="font-size:15px;font-weight:600">Send recovery tool to each candidate</h3>
+      </div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Download the recovery tool file and send it to the candidate by email or WhatsApp. They open it in their browser and it automatically extracts and downloads their exam data.</p>
+      <button onclick="downloadRecoveryTool()" style="padding:10px 20px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--rs);cursor:pointer;display:inline-flex;align-items:center;gap:8px">
+        <i class="ti ti-download"></i> Download Recovery Tool
+      </button>
+      <p style="font-size:12px;color:var(--text3);margin-top:8px">Send <strong>recovery-tool.html</strong> to the candidate → they open it → a JSON file downloads → they send it back to you</p>
     </div>
 
-    <!-- Upload box -->
-    <label class="rec-upload-box" id="rec-upload-label">
-      <input type="file" id="rec-file-input" style="display:none" onchange="loadWebDataFile(event)">
-      <i class="ti ti-file-database"></i>
-      <h3>Click to upload Edge Web Data file</h3>
-      <p>Select the <strong>Web Data</strong> file from the candidate's Edge profile</p>
-    </label>
+    <!-- STEP 2: Import JSON back -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="width:28px;height:28px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">2</div>
+        <h3 style="font-size:15px;font-weight:600">Import the JSON file the candidate sends back</h3>
+      </div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Once the candidate runs the recovery tool and sends you the JSON file, import it here to add them to your panel.</p>
+      <label style="padding:10px 20px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--green);color:#fff;border:none;border-radius:var(--rs);cursor:pointer;display:inline-flex;align-items:center;gap:8px">
+        <i class="ti ti-file-import"></i> Import candidate JSON
+        <input type="file" accept=".json" style="display:none" onchange="importOfflineJSON(event)">
+      </label>
+      <p style="font-size:12px;color:var(--text3);margin-top:8px">Accepts files from the recovery tool or any offline backup JSON</p>
+    </div>
+
+    <!-- STEP 3: Edge Web Data (advanced) -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="width:28px;height:28px;background:var(--orange);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">3</div>
+        <h3 style="font-size:15px;font-weight:600">Advanced: Recover from Edge autofill database</h3>
+      </div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:6px">If the candidate can't run the recovery tool, you can extract data directly from Edge's autofill database. Ask them to:</p>
+      <ol style="font-size:13px;color:var(--text2);padding-left:18px;line-height:2;margin-bottom:14px">
+        <li>Close Edge completely</li>
+        <li>Press <strong>Windows + R</strong> → paste <code style="background:var(--surface2);padding:1px 6px;border-radius:4px">%LOCALAPPDATA%\Microsoft\Edge\User Data\Default</code> → Enter</li>
+        <li>Find file named <strong>Web Data</strong> (no extension) → copy to Desktop → send to you</li>
+      </ol>
+      <label class="rec-upload-box" id="rec-upload-label" style="margin-bottom:0">
+        <input type="file" id="rec-file-input" style="display:none" onchange="loadWebDataFile(event)">
+        <i class="ti ti-file-database"></i>
+        <h3>Click to upload Edge Web Data file</h3>
+        <p>Extract everything typed in the exam from Edge's autofill database</p>
+      </label>
+    </div>
 
     <!-- Status -->
     <div class="rec-status" id="rec-status"></div>
